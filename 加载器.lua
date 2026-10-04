@@ -1,7 +1,7 @@
--- 动态黑脚本库加载器（GitHub Tree API 版）
--- 自动读取仓库中所有 .lua 文件，并生成按钮
+-- 动态黑脚本库加载器（分页 Contents API 版）
+-- 自动读取仓库所有 .lua 文件，并生成按钮
 -- 仓库：cheng2026-tech/Main.lua
--- 兼容 120+ 个脚本，避免 GitHub Contents API 分页限制
+-- 兼容 120+ 个脚本，避免单次 Contents API 截断
 
 local HttpService = game:GetService("HttpService")
 local StarterGui = game:GetService("StarterGui")
@@ -30,47 +30,49 @@ local function notify(title, text, duration)
     end)
 end
 
-local function urlEncodePath(path)
-    if type(path) ~= "string" then
-        return path
-    end
-
-    local encoded = HttpService:UrlEncode(path)
-    encoded = encoded:gsub("%+", "%%20")
-    return encoded
-end
-
-local function fetchRepoScripts()
+local function repoFiles()
     local result = {}
+    local page = 1
 
-    local okReq, res = pcall(function()
-        return game:HttpGet("https://api.github.com/repos/cheng2026-tech/Main.lua/git/trees/main?recursive=1")
-    end)
+    while true do
+        local okReq, res = pcall(function()
+            return game:HttpGet("https://api.github.com/repos/cheng2026-tech/Main.lua/contents?ref=main&per_page=100&page=" .. tostring(page))
+        end)
 
-    if not okReq or not res then
-        return result
-    end
+        if not okReq or not res then
+            break
+        end
 
-    local okDecode, data = pcall(function()
-        return HttpService:JSONDecode(res)
-    end)
+        local okDecode, data = pcall(function()
+            return HttpService:JSONDecode(res)
+        end)
 
-    if not okDecode or type(data) ~= "table" or type(data.tree) ~= "table" then
-        return result
-    end
+        if not okDecode or type(data) ~= "table" then
+            break
+        end
 
-    for _, item in ipairs(data.tree) do
-        if item and item.type == "blob" and item.path and item.path:lower():match("%.lua$") then
-            local name = item.path:match("[^/]+$") or item.path
-            if name ~= "加载器.lua" then
-                local rawUrl = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/" .. urlEncodePath(item.path)
-                table.insert(result, {
-                    Name = name,
-                    URL = rawUrl,
-                    Path = item.path,
-                })
+        if #data == 0 then
+            break
+        end
+
+        for _, item in ipairs(data) do
+            if item and item.type == "file" and item.name and item.name:lower():match("%.lua$") then
+                local name = item.name
+                if name ~= "加载器.lua" then
+                    table.insert(result, {
+                        Name = name,
+                        URL = item.download_url or ("https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/" .. item.path),
+                        Path = item.path,
+                    })
+                end
             end
         end
+
+        if #data < 100 then
+            break
+        end
+
+        page = page + 1
     end
 
     table.sort(result, function(a, b)
@@ -80,7 +82,7 @@ local function fetchRepoScripts()
     return result
 end
 
-local scriptList = fetchRepoScripts()
+local scriptList = repoFiles()
 
 if #scriptList == 0 then
     scriptList = {
@@ -90,7 +92,7 @@ if #scriptList == 0 then
         {Name = "fps通用.lua", URL = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/fps%E9%80%9A%E7%94%A8.lua"},
         {Name = "为你的城市供电.lua", URL = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/%E4%B8%BA%E4%BD%A0%E7%9A%84%E5%9F%8E%E5%B8%82%E4%BE%9B%E7%94%B5.lua"},
         {Name = "伐木大亨2.lua", URL = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/%E4%BC%90%E6%9C%A8%E5%A4%A7%E4%BA%A82.lua"},
-        {Name = "飞行世界.lua", URL = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/%E9%A3%9E%E8%A1%8C%E4%B8%95%E7%95%8C.lua"},
+        {Name = "飞行世界.lua", URL = "https://raw.githubusercontent.com/cheng2026-tech/Main.lua/main/%E9%A3%9E%E8%A1%8C%E4%B8%96%E7%95%8C.lua"},
     }
 end
 
@@ -117,7 +119,7 @@ local function addButton(targetTab, script)
         Color = Color3.fromRGB(104, 147, 255),
         Callback = function()
             notify("加载中", "正在加载：" .. script.Name, 2)
-            local okLoad, result = pcall(function()
+            local okLoad = pcall(function()
                 local fn = loadstring(game:HttpGet(script.URL))
                 if type(fn) == "function" then
                     fn()
@@ -140,14 +142,14 @@ end
 local about = Window:Tab({Title = "关于", Icon = "solar:info-bold"})
 about:Paragraph({
     Title = "说明",
-    Desc = "1. 该加载器会读取 GitHub 仓库的全部 .lua 文件\n2. 直接点击脚本即可加载\n3. 不受 GitHub Contents 分页限制\n4. 新增脚本后重开加载器即可刷新",
+    Desc = "1. 该加载器会读取 GitHub 仓库的全部 .lua 文件\n2. 直接点击脚本即可加载\n3. 会按页分页获取，避免 100+ 文件被截断\n4. 新增脚本后重开加载器即可刷新",
 })
 about:Button({
     Title = "刷新脚本列表",
     Justify = "Center",
     Color = Color3.fromRGB(76, 175, 80),
     Callback = function()
-        local newList = fetchRepoScripts()
+        local newList = repoFiles()
         if #newList == 0 then
             notify("刷新失败", "无法获取仓库文件列表", 2)
             return
@@ -156,7 +158,6 @@ about:Button({
         scriptList = newList
         notify("已刷新", "共发现 " .. #scriptList .. " 个脚本", 2)
 
-        -- 关闭原窗口后重新创建，避免按钮重复堆叠
         Window:Close()
 
         local refreshedWindow = WindUI:CreateWindow({
